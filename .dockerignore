@@ -1,0 +1,8 @@
+acervo_pci
+.history
+.git
+.venv
+__pycache__
+.pytest_cache
+*.pdf
+docs

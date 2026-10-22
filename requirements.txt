@@ -1,0 +1,5 @@
+streamlit>=1.50,<2
+requests>=2.32.4,<3
+beautifulsoup4>=4.13,<5
+pypdf>=6,<7
+protego>=0.4,<1

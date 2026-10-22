@@ -1,0 +1,13 @@
+services:
+  acervo:
+    build: .
+    init: true
+    ports:
+      - "127.0.0.1:8501:8501"
+    environment:
+      ACERVO_DIR: /data
+      TZ: America/Sao_Paulo
+    volumes:
+      - ./acervo_pci:/data
+    restart: unless-stopped
+    stop_grace_period: 15s
