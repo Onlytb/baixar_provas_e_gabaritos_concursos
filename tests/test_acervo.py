@@ -13,7 +13,7 @@ from acervo.files import import_pdf, safe_path, store_pdf
 from acervo.http import AccessRequired, Cancelled, Client
 from acervo.jobs import Runner, cancel_job, create_job, interrupted
 from acervo.model import DEFAULT_ROLES, Filters
-from acervo.sources import fafipa_contests, fafipa_detail, kind_for, pagination, pci_detail, pci_rows, pdf_links
+from acervo.sources import fafipa_contests, fafipa_detail, kind_for, pagination, pci_detail, pci_rows, pdf_links, qconcursos_facets, qconcursos_rows, qconcursos_search_url
 
 
 def soup(html):
@@ -96,6 +96,10 @@ def test_javascript_link_is_not_mistaken_for_captcha():
         pci_detail(soup(html), "https://www.pciconcursos.com.br/provas/download/x")
     captcha = '<h1>Provas para Download</h1><div class="cf-turnstile"></div>'
     assert pci_detail(soup(captcha), "https://www.pciconcursos.com.br/provas/download/x") == ("verificação necessária", [])
+    released = '<h1>Provas para Download</h1><a href="/provas/35405865/0cdd8cec458/agente_administrativo.pdf">Baixar prova</a>'
+    state, docs = pci_detail(soup(released), "https://www.pciconcursos.com.br/provas/download/agente-administrativo-prefeitura-douradina-pr-fafipa-2025")
+    assert state == "disponível"
+    assert docs == [{"url": "https://www.pciconcursos.com.br/provas/35405865/0cdd8cec458/agente_administrativo.pdf", "tipo": "prova", "nome": "Baixar prova"}]
     assert pci_detail(soup("<h1>Provas para Download</h1>"), "https://www.pciconcursos.com.br/x")[0] == "sem arquivos"
     with pytest.raises(ValueError):
         pci_detail(soup("<h1>Erro</h1>"), "https://www.pciconcursos.com.br/x")
@@ -112,6 +116,11 @@ def test_view_download_dedup_without_hash_guessing():
 @pytest.mark.parametrize("label,kind", [("Edital - Divulgação do gabarito preliminar e caderno de questões", "comunicado"), ("Gabarito Definitivo", "gabarito definitivo"), ("Gabarito preliminar", "gabarito preliminar"), ("Caderno de questões - Analista Administrativo", "prova")])
 def test_classify(label, kind):
     assert kind_for(label) == kind
+
+
+def test_pci_edital_is_classified_as_edital():
+    html = '<li><a href="https://www.pciconcursos.com.br/provas/123/abc/edital_de_abertura.pdf">Edital de abertura</a></li>'
+    assert pdf_links(soup(html), "https://www.pciconcursos.com.br/provas/download/x")[0]["tipo"] == "edital"
 
 
 def test_fafipa_roles_and_announcements():
@@ -142,6 +151,89 @@ def test_view_download_in_different_sections():
 def test_pagination_no_year_shortcut():
     html = '<a href="/provas/analista-administrativo/2">2</a><a href="/provas/analista-administrativo/21">21</a><a href="/provas/download/x">prova</a>'
     assert len(pagination(soup(html), "https://www.pciconcursos.com.br/provas/analista-administrativo")) == 2
+
+
+def test_qconcursos_filters_and_search_url():
+    html = '''<form>
+      <label for="board">FAFIPA</label><input id="board" name="by_examining_board[]" value="346">
+      <select name="by_institution[]"><option value="">Todos</option><option value="77">Prefeitura de Douradina</option></select>
+      <label for="job">Analista Administrativo</label><input id="job" name="by_job[]" value="6">
+      <label for="year21">2021</label><input id="year21" name="application_year[]" value="2021">
+      <label for="year22">2022</label><input id="year22" name="application_year[]" value="2022">
+      <label for="school">Superior</label><input id="school" name="by_scholarity[]" value="3">
+      <label for="area">Administrativa</label><input id="area" name="by_acting_area[]" value="19">
+      <label for="formation">Administração</label><input id="formation" name="by_formation_area[]" value="22">
+    </form>'''
+    facets = qconcursos_facets(soup(html))
+    assert {facet["campo"] for facet in facets} == {"by_examining_board", "by_institution", "by_job", "application_year", "by_scholarity", "by_acting_area", "by_formation_area"}
+    filters = Filters(bancas=["FAFIPA"], orgaos=["Prefeitura de Douradina"], cargos=["Analista Administrativo"], anos_aplicacao=["2021", "2022"], escolaridades=["Superior"], areas_atuacao=["Administrativa"], areas_formacao=["Administração"])
+    url = qconcursos_search_url(filters, facets)
+    assert "by_examining_board%5B%5D=346" in url
+    assert "by_institution%5B%5D=77" in url
+    assert "by_job%5B%5D=6" in url
+    assert "application_year%5B%5D=2021" in url
+    assert "application_year%5B%5D=2022" in url
+    assert "by_scholarity%5B%5D=3" in url
+    assert "by_acting_area%5B%5D=19" in url
+    assert "by_formation_area%5B%5D=22" in url
+
+
+def test_qconcursos_rows_files_and_pagination():
+    html = '''<div class="proof-card">
+      <a href="/questoes-de-concursos/provas/fafipa-2025-camara-de-carambei-pr-analista-administrativo">Prova FAFIPA - 2025 - Câmara de Carambeí - PR - Analista Administrativo</a>
+      <p>Aplicada em 19/10/25 - Nível Superior</p>
+      <a href="https://arquivos.qconcursos.com/prova/arquivo_prova/1/prova.pdf">Baixar prova</a>
+      <a href="https://arquivos.qconcursos.com/prova/arquivo_gabarito/1/gabarito.pdf">Baixar Gabarito</a>
+      <a href="https://arquivos.qconcursos.com/concurso/justificativa/1/alteracoes.pdf">Baixar Alterações</a>
+      <a href="https://arquivos.qconcursos.com/regulamento/arquivo/1/edital.pdf">Baixar Edital</a>
+    </div>
+    <a rel="next" href="/questoes-de-concursos/provas?page=2">Próxima</a>'''
+    rows = qconcursos_rows(soup(html))
+    assert len(rows) == 1
+    row = rows[0]
+    assert (row["fonte"], row["banca"], row["ano"], row["cargo"]) == ("QCONCURSOS", "FAFIPA", 2025, "Analista Administrativo")
+    assert row["orgao"] == "Câmara de Carambeí - PR"
+    assert row["escolaridade"] == "Superior"
+    assert {doc["tipo"] for doc in row["documentos"]} == {"prova", "gabarito", "alterações", "edital"}
+    assert pagination(soup(html), "https://www.qconcursos.com/questoes-de-concursos/provas") == ["https://www.qconcursos.com/questoes-de-concursos/provas?page=2"]
+
+
+def test_qconcursos_facets_are_local_filters_only():
+    qrow = {"fonte": "QCONCURSOS", "escolaridade": "Superior", "areas_atuacao": "Administrativa", "areas_formacao": "Administração"}
+    pcirow = {"fonte": "PCI", "escolaridade": "", "areas_atuacao": "", "areas_formacao": ""}
+    f = Filters(escolaridades=["Superior"], areas_atuacao=["Administrativa"], areas_formacao=["Administração"])
+    assert f.matches(qrow)
+    assert f.matches(pcirow)
+
+
+def test_selected_application_years_filter_records():
+    f = Filters(anos_aplicacao=["2021", "2023"])
+    assert f.matches({"fonte": "PCI", "ano": 2021})
+    assert f.matches({"fonte": "QCONCURSOS", "ano": 2023})
+    assert not f.matches({"fonte": "QCONCURSOS", "ano": 2022})
+
+
+def test_v4_migration_removes_fafipa_and_unlinked_pdf_only(tmp_path):
+    initialize(tmp_path)
+    with connect(tmp_path) as c:
+        fafipa_id = upsert_record(c, fonte="FAFIPA", url="https://fafipa.selecao.net.br/informacoes/1", cargo="Analista", orgao="Prefeitura X/PR", banca="FAFIPA")
+        pci_id = upsert_record(c, fonte="PCI", url="https://www.pciconcursos.com.br/provas/download/x", cargo="Analista", orgao="Prefeitura X/PR", banca="FAFIPA")
+        orphan = discover_document(c, [fafipa_id], "https://anexos-r2.selecao.net.br/orfao.pdf", "prova", "orfao.pdf")
+        shared = discover_document(c, [fafipa_id, pci_id], "https://arquivos.qconcursos.com/prova/arquivo_prova/1/shared.pdf", "prova", "shared.pdf")
+        c.execute("UPDATE documentos SET caminho=? WHERE id=?", ("pdfs/aa/orfao.pdf", orphan))
+        c.execute("UPDATE documentos SET caminho=? WHERE id=?", ("pdfs/bb/shared.pdf", shared))
+        c.execute("INSERT INTO facetas_qconcursos VALUES('by_job','Analista','6')")
+        c.execute("PRAGMA user_version=3")
+    (tmp_path / "pdfs" / "aa").mkdir(parents=True)
+    (tmp_path / "pdfs" / "bb").mkdir(parents=True)
+    (tmp_path / "pdfs" / "aa" / "orfao.pdf").write_bytes(b"orphan")
+    (tmp_path / "pdfs" / "bb" / "shared.pdf").write_bytes(b"shared")
+    initialize(tmp_path)
+    assert len(records(tmp_path)) == 1
+    assert not (tmp_path / "pdfs" / "aa" / "orfao.pdf").exists()
+    assert (tmp_path / "pdfs" / "bb" / "shared.pdf").is_file()
+    assert len(documents(root=tmp_path)) == 1
+    assert list((tmp_path / "backups").glob("antes-migracao-v4-*.sqlite3"))
 
 
 def test_import_dedup_many_roles_and_sources_and_search(root):
@@ -189,6 +281,8 @@ def test_job_exclusion_cancel_and_restart(root):
 def test_robots_and_redirect_validation():
     from protego import Protego
     client = Client()
+    client.validate("https://www.qconcursos.com/questoes-de-concursos/provas")
+    client.validate("https://arquivos.qconcursos.com/prova/arquivo_prova/1/prova.pdf")
     client.robots["https://www.pciconcursos.com.br"] = Protego.parse("User-agent: *\nDisallow: /*.pdf\n")
     with pytest.raises(AccessRequired):
         client.allowed("https://www.pciconcursos.com.br/provas/x.pdf")
@@ -206,25 +300,22 @@ def test_repeated_records_and_documents_are_idempotent(root):
     assert len(records(root)) == len(documents(root=root)) == 1
 
 
-def test_fafipa_job_discovers_current_links_and_preserves_role_scope(root, monkeypatch):
+def test_fafipa_is_not_used_for_new_searches(root, monkeypatch):
     url = 'https://fafipa.selecao.net.br/concurso/4161-municipio'
     index = soup(f'<a href="{url}">Mais informações</a>')
     detail = soup('<h1>Concurso Público do Município de Três Barras - SC</h1><p>Edital nº 001/2026</p><div data-aba="cargos"><div class="det-row"><span>Analista Administrativo</span><b>1 vaga</b></div><div class="det-row"><span>Auxiliar Administrativo</span><b>1 vaga</b></div></div><a href="https://anexos-r2.selecao.net.br/g.pdf">Gabarito definitivo</a><a href="https://anexos-r2.selecao.net.br/aux.pdf">Caderno Auxiliar Administrativo</a><a href="https://anexos-r2.selecao.net.br/r.pdf">Resultado final</a>')
-    for _ in range(2):
-        job = create_job("catalogar", {"filtros": Filters(cargos=["Analista Administrativo"], fontes=["FAFIPA"]).to_dict()}, root, launch=False)
-        runner = Runner(job, root)
-        monkeypatch.setattr(runner, "page", lambda u: detail if u == url else index)
-        assert runner.run() == "concluída"
-    assert len(records(root)) == 1
-    docs = documents(records(root)[0]["id"], root)
-    assert len(docs) == 1 and docs[0]["tipos"] == "gabarito definitivo"
+    job = create_job("catalogar", {"filtros": Filters(cargos=["Analista Administrativo"], fontes=["FAFIPA"]).to_dict()}, root, launch=False)
+    runner = Runner(job, root)
+    monkeypatch.setattr(runner, "page", lambda u: pytest.fail("FAFIPA não deve ser consultada"))
+    assert runner.run() == "concluída"
+    assert records(root) == []
 
 
-def test_failed_index_is_partial_not_success(root, monkeypatch):
+def test_removed_fafipa_filter_does_not_start_a_source_scan(root, monkeypatch):
     job = create_job("catalogar", {"filtros": {"fontes": ["FAFIPA"]}}, root, launch=False)
     runner = Runner(job, root)
-    monkeypatch.setattr(runner, "page", lambda u: soup("<p>Layout desconhecido</p>"))
-    assert runner.run() == "parcial"
+    monkeypatch.setattr(runner, "page", lambda u: pytest.fail("FAFIPA não deve ser consultada"))
+    assert runner.run() == "concluída"
 
 
 def test_corrupt_file_is_repaired_on_reimport(root):
@@ -244,6 +335,14 @@ def test_app_starts_without_errors(root, monkeypatch):
     app = AppTest.from_file(Path(__file__).resolve().parents[1] / "app.py", default_timeout=30).run()
     assert not app.exception
     assert [t.label for t in app.tabs] == ["Buscar provas", "Meu acervo", "Importar arquivos"]
+    assert {widget.label for widget in app.multiselect} >= {
+        "Ano de aplicação · Qconcursos", "Bancas", "Órgãos / instituições",
+        "Escolaridade", "Área de atuação", "Área de formação",
+    }
+    next(widget for widget in app.multiselect if widget.label == "Fontes").set_value(["PCI"]).run()
+    assert not app.exception
+    assert any(widget.label == "Ano inicial" for widget in app.number_input)
+    assert not any(widget.label == "Ano de aplicação · Qconcursos" for widget in app.multiselect)
 
 
 def test_app_pdf_search_and_import_form(root, monkeypatch):

@@ -43,7 +43,7 @@ def connect(root=None):
 
 
 SCHEMA = """
-CREATE TABLE concursos(id INTEGER PRIMARY KEY, fonte TEXT NOT NULL, url TEXT NOT NULL UNIQUE, orgao TEXT NOT NULL, banca TEXT NOT NULL, ano INTEGER, municipio TEXT, uf TEXT, edital TEXT DEFAULT '');
+CREATE TABLE concursos(id INTEGER PRIMARY KEY, fonte TEXT NOT NULL, url TEXT NOT NULL UNIQUE, orgao TEXT NOT NULL, banca TEXT NOT NULL, ano INTEGER, municipio TEXT, uf TEXT, edital TEXT DEFAULT '', escolaridade TEXT DEFAULT '', areas_atuacao TEXT DEFAULT '', areas_formacao TEXT DEFAULT '');
 CREATE TABLE registros(id INTEGER PRIMARY KEY, concurso_id INTEGER NOT NULL REFERENCES concursos(id), cargo TEXT NOT NULL, cargo_norm TEXT NOT NULL, categoria TEXT DEFAULT '', estado TEXT DEFAULT 'catalogado', erro TEXT DEFAULT '', etiquetas TEXT DEFAULT '[]', atualizado_em TEXT, UNIQUE(concurso_id,cargo_norm));
 CREATE TABLE documentos(id INTEGER PRIMARY KEY, sha256 TEXT UNIQUE, caminho TEXT, nome TEXT NOT NULL, texto_estado TEXT DEFAULT 'pendente', atualizado_em TEXT);
 CREATE TABLE origens_documento(id INTEGER PRIMARY KEY, documento_id INTEGER NOT NULL REFERENCES documentos(id), url TEXT NOT NULL UNIQUE, tipo TEXT NOT NULL, nome TEXT, estado TEXT DEFAULT 'pendente', erro TEXT DEFAULT '', motivo_codigo TEXT DEFAULT 'aguardando_nova_tentativa', http_status INTEGER, tentado_em TEXT);
@@ -53,51 +53,66 @@ CREATE TABLE execucoes(id INTEGER PRIMARY KEY, acao TEXT NOT NULL, parametros TE
 CREATE UNIQUE INDEX uma_execucao ON execucoes((1)) WHERE estado IN ('iniciando','executando');
 CREATE TABLE eventos(id INTEGER PRIMARY KEY, execucao_id INTEGER REFERENCES execucoes(id), momento TEXT, nivel TEXT, mensagem TEXT);
 CREATE TABLE categorias(fonte TEXT, nome TEXT, url TEXT, PRIMARY KEY(fonte,url));
+CREATE TABLE facetas_qconcursos(campo TEXT NOT NULL, nome TEXT NOT NULL, valor TEXT NOT NULL, PRIMARY KEY(campo,valor));
 CREATE INDEX vinculos_registro ON documento_registro(registro_id);
 """
 
 
 def initialize(root=None):
     root = Path(root or root_dir())
+    removed_paths = []
+    migrated_v4 = False
     with connect(root) as c:
         c.execute("PRAGMA journal_mode=WAL")
         version = c.execute("PRAGMA user_version").fetchone()[0]
         if version >= 1:
-            if version < 3:
+            if version < 4:
                 backup_dir = root / "backups"
                 backup_dir.mkdir(exist_ok=True)
-                with sqlite3.connect(backup_dir / (datetime.now().strftime("antes-migracao-v3-%Y%m%d-%H%M%S") + ".sqlite3")) as backup:
+                with sqlite3.connect(backup_dir / (datetime.now().strftime("antes-migracao-v4-%Y%m%d-%H%M%S") + ".sqlite3")) as backup:
                     c.backup(backup)
                 if version < 2:
                     migrate_v2(c)
                 migrate_v3(c)
-            return
-        tables = {r[0] for r in c.execute("SELECT name FROM sqlite_master WHERE type='table'")}
-        if "provas" in tables:
-            backup_dir = root / "backups"
-            backup_dir.mkdir(exist_ok=True)
-            with sqlite3.connect(backup_dir / (datetime.now().strftime("antes-migracao-%Y%m%d-%H%M%S") + ".sqlite3")) as backup:
-                c.backup(backup)
-        c.executescript("BEGIN IMMEDIATE;\n" + SCHEMA)
-        if "provas" in tables:
-            for old in c.execute("SELECT * FROM provas").fetchall():
-                upsert_record(c, fonte="PCI", url=old["url_detalhe"], cargo=old["cargo"], ano=old["ano"], orgao=old["orgao"] or "", banca=old["banca"] or "", categoria=old["categoria"] or "")
-        if "arquivos" in tables:
-            for old in c.execute("SELECT * FROM arquivos").fetchall():
-                rec = c.execute("SELECT r.id FROM registros r JOIN concursos c ON c.id=r.concurso_id WHERE c.url=?", (old["url_detalhe"],)).fetchone()
-                if not rec:
-                    continue
-                doc = discover_document(c, [rec[0]], old["url_pdf"], old["tipo"] or "prova", old["nome_original"] or "arquivo.pdf")
-                old_path = Path(old["caminho"] or "")
-                candidates = [old_path, root / old_path, root / "pdfs" / str(old_path).replace("\\", "/").split("pdfs/")[-1]]
-                path = next((p.resolve() for p in candidates if p.is_file() and p.resolve().is_relative_to(root.resolve())), None)
-                if path:
-                    # Reindex legacy files on first CLI/UI use, retaining provenance.
-                    c.execute("UPDATE documentos SET caminho=?,sha256=?,texto_estado='pendente' WHERE id=?", (path.relative_to(root.resolve()).as_posix(), old["sha256"] or None, doc))
-                    c.execute("UPDATE origens_documento SET estado='baixado' WHERE documento_id=?", (doc,))
-        c.execute("PRAGMA user_version=1")
-        migrate_v2(c)
-        migrate_v3(c)
+                removed_paths = migrate_v4(c)
+                migrated_v4 = True
+        else:
+            tables = {r[0] for r in c.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+            if "provas" in tables:
+                backup_dir = root / "backups"
+                backup_dir.mkdir(exist_ok=True)
+                with sqlite3.connect(backup_dir / (datetime.now().strftime("antes-migracao-%Y%m%d-%H%M%S") + ".sqlite3")) as backup:
+                    c.backup(backup)
+            c.executescript("BEGIN IMMEDIATE;\n" + SCHEMA)
+            if "provas" in tables:
+                for old in c.execute("SELECT * FROM provas").fetchall():
+                    upsert_record(c, fonte="PCI", url=old["url_detalhe"], cargo=old["cargo"], ano=old["ano"], orgao=old["orgao"] or "", banca=old["banca"] or "", categoria=old["categoria"] or "")
+            if "arquivos" in tables:
+                for old in c.execute("SELECT * FROM arquivos").fetchall():
+                    rec = c.execute("SELECT r.id FROM registros r JOIN concursos cc ON cc.id=r.concurso_id WHERE cc.url=?", (old["url_detalhe"],)).fetchone()
+                    if not rec:
+                        continue
+                    doc = discover_document(c, [rec[0]], old["url_pdf"], old["tipo"] or "prova", old["nome_original"] or "arquivo.pdf")
+                    old_path = Path(old["caminho"] or "")
+                    candidates = [old_path, root / old_path, root / "pdfs" / str(old_path).replace("\\", "/").split("pdfs/")[-1]]
+                    path = next((p.resolve() for p in candidates if p.is_file() and p.resolve().is_relative_to(root.resolve())), None)
+                    if path:
+                        c.execute("UPDATE documentos SET caminho=?,sha256=?,texto_estado='pendente' WHERE id=?", (path.relative_to(root.resolve()).as_posix(), old["sha256"] or None, doc))
+                        c.execute("UPDATE origens_documento SET estado='baixado' WHERE documento_id=?", (doc,))
+            c.execute("PRAGMA user_version=1")
+            migrate_v2(c)
+            migrate_v3(c)
+            removed_paths = migrate_v4(c)
+            migrated_v4 = True
+    if migrated_v4:
+        pdf_root = (root / "pdfs").resolve()
+        for relative in removed_paths:
+            path = (root / relative).resolve()
+            if path.is_relative_to(pdf_root) and path.suffix.lower() == ".pdf":
+                path.unlink(missing_ok=True)
+        temporary = root / "catalogo.csv.part"
+        temporary.write_bytes(export_csv(root))
+        temporary.replace(root / "catalogo.csv")
 
 
 def migrate_v2(c):
@@ -144,9 +159,34 @@ def migrate_v3(c):
     c.execute("PRAGMA user_version=3")
 
 
-def upsert_record(c, *, fonte, url, cargo, orgao, banca, ano=None, municipio=None, uf=None, categoria="", edital=""):
+def migrate_v4(c):
+    """Remove the FAFIPA catalog and preserve only files still linked elsewhere."""
+    if not c.in_transaction:
+        c.execute("BEGIN IMMEDIATE")
+    if c.execute("PRAGMA user_version").fetchone()[0] >= 4:
+        return []
+    columns = {row[1] for row in c.execute("PRAGMA table_info(concursos)")}
+    for column in ("escolaridade", "areas_atuacao", "areas_formacao"):
+        if column not in columns:
+            c.execute(f"ALTER TABLE concursos ADD COLUMN {column} TEXT DEFAULT ''")
+    c.execute("CREATE TABLE IF NOT EXISTS facetas_qconcursos(campo TEXT NOT NULL, nome TEXT NOT NULL, valor TEXT NOT NULL, PRIMARY KEY(campo,valor))")
+    c.execute("DELETE FROM categorias WHERE fonte='FAFIPA'")
+    c.execute("DELETE FROM facetas_qconcursos")
+    c.execute("DELETE FROM documento_registro WHERE registro_id IN (SELECT r.id FROM registros r JOIN concursos cc ON cc.id=r.concurso_id WHERE cc.fonte='FAFIPA')")
+    c.execute("DELETE FROM registros WHERE concurso_id IN (SELECT id FROM concursos WHERE fonte='FAFIPA')")
+    c.execute("DELETE FROM concursos WHERE fonte='FAFIPA'")
+    orphaned = c.execute("SELECT id,caminho FROM documentos WHERE NOT EXISTS(SELECT 1 FROM documento_registro dr WHERE dr.documento_id=documentos.id)").fetchall()
+    for row in orphaned:
+        c.execute("DELETE FROM origens_documento WHERE documento_id=?", (row["id"],))
+        c.execute("DELETE FROM textos WHERE rowid=?", (row["id"],))
+        c.execute("DELETE FROM documentos WHERE id=?", (row["id"],))
+    c.execute("PRAGMA user_version=4")
+    return [row["caminho"] for row in orphaned if row["caminho"]]
+
+
+def upsert_record(c, *, fonte, url, cargo, orgao, banca, ano=None, municipio=None, uf=None, categoria="", edital="", escolaridade="", areas_atuacao="", areas_formacao=""):
     city, state = location(orgao)
-    c.execute("INSERT INTO concursos(fonte,url,orgao,banca,ano,municipio,uf,edital) VALUES(?,?,?,?,?,?,?,?) ON CONFLICT(url) DO UPDATE SET orgao=excluded.orgao,banca=excluded.banca,ano=excluded.ano,municipio=excluded.municipio,uf=excluded.uf,edital=CASE WHEN excluded.edital<>'' THEN excluded.edital ELSE concursos.edital END", (fonte, url, orgao, banca, year(ano), municipio or city, uf or state, edital))
+    c.execute("INSERT INTO concursos(fonte,url,orgao,banca,ano,municipio,uf,edital,escolaridade,areas_atuacao,areas_formacao) VALUES(?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(url) DO UPDATE SET orgao=excluded.orgao,banca=excluded.banca,ano=excluded.ano,municipio=excluded.municipio,uf=excluded.uf,edital=CASE WHEN excluded.edital<>'' THEN excluded.edital ELSE concursos.edital END,escolaridade=CASE WHEN excluded.escolaridade<>'' THEN excluded.escolaridade ELSE concursos.escolaridade END,areas_atuacao=CASE WHEN excluded.areas_atuacao<>'' THEN excluded.areas_atuacao ELSE concursos.areas_atuacao END,areas_formacao=CASE WHEN excluded.areas_formacao<>'' THEN excluded.areas_formacao ELSE concursos.areas_formacao END", (fonte, url, orgao, banca, year(ano), municipio or city, uf or state, edital, escolaridade, areas_atuacao, areas_formacao))
     contest = c.execute("SELECT id FROM concursos WHERE url=?", (url,)).fetchone()[0]
     c.execute("INSERT INTO registros(concurso_id,cargo,cargo_norm,categoria,atualizado_em) VALUES(?,?,?,?,?) ON CONFLICT(concurso_id,cargo_norm) DO UPDATE SET cargo=excluded.cargo,categoria=excluded.categoria,atualizado_em=excluded.atualizado_em", (contest, cargo, norm(cargo), categoria, now()))
     return c.execute("SELECT id FROM registros WHERE concurso_id=? AND cargo_norm=?", (contest, norm(cargo))).fetchone()[0]
@@ -168,7 +208,7 @@ def discover_document(c, record_ids, url, kind, name):
 
 def records(root=None, filters=None):
     with connect(root) as c:
-        result = [dict(r) for r in c.execute("""SELECT r.*,c.fonte,c.url,c.orgao,c.banca,c.ano,c.municipio,c.uf,c.edital,c.id concurso_id
+        result = [dict(r) for r in c.execute("""SELECT r.*,c.fonte,c.url,c.orgao,c.banca,c.ano,c.municipio,c.uf,c.edital,c.escolaridade,c.areas_atuacao,c.areas_formacao,c.id concurso_id
         FROM registros r JOIN concursos c ON c.id=r.concurso_id ORDER BY c.ano DESC,c.orgao,r.cargo""")]
         visible = visible_origin_links(c)
         saved_documents = valid_document_ids(c, root)

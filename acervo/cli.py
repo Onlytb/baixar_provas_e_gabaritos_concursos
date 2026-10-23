@@ -20,10 +20,14 @@ def main():
     p.add_argument("--orgao", action="append", default=[])
     p.add_argument("--municipio", action="append", default=[])
     p.add_argument("--uf", action="append", default=[])
-    p.add_argument("--fonte", action="append", choices=["PCI", "FAFIPA"])
+    p.add_argument("--fonte", action="append", choices=["PCI", "QCONCURSOS"])
     p.add_argument("--tipo", action="append", default=[])
+    p.add_argument("--escolaridade", action="append", default=[])
+    p.add_argument("--area-atuacao", action="append", default=[])
+    p.add_argument("--area-formacao", action="append", default=[])
     p.add_argument("--ano-inicio", type=int)
     p.add_argument("--ano-fim", type=int)
+    p.add_argument("--ano", action="append", default=[], help="Ano específico de aplicação; pode repetir")
     p.add_argument("--foco", action="store_true", help="FAFIPA ou Prefeitura de Curitiba")
     p.add_argument("--intervalo", type=float, default=2.5)
     args = p.parse_args()
@@ -32,7 +36,7 @@ def main():
     if args.ano_inicio and args.ano_fim and args.ano_inicio > args.ano_fim:
         p.error("Ano inicial deve ser menor ou igual ao final")
     initialize(args.saida)
-    f = Filters(cargos=[] if args.todos_cargos else args.cargo or DEFAULT_ROLES + (EXTRA_ROLES if args.correlatas else []), bancas=args.banca, orgaos=args.orgao, municipios=args.municipio, ufs=args.uf, fontes=args.fonte or ["PCI", "FAFIPA"], tipos=args.tipo, ano_inicio=args.ano_inicio, ano_fim=args.ano_fim, foco=args.foco)
+    f = Filters(cargos=[] if args.todos_cargos else args.cargo or DEFAULT_ROLES + (EXTRA_ROLES if args.correlatas else []), bancas=args.banca, orgaos=args.orgao, municipios=args.municipio, ufs=args.uf, fontes=args.fonte or ["PCI", "QCONCURSOS"], tipos=args.tipo, escolaridades=args.escolaridade, areas_atuacao=args.area_atuacao, areas_formacao=args.area_formacao, anos_aplicacao=args.ano, ano_inicio=args.ano_inicio, ano_fim=args.ano_fim, foco=args.foco)
     action = "download" if args.somente_download else "catalogar"
     try:
         job = create_job(action, {"filtros": f.to_dict(), "download": args.download}, args.saida, launch=False)

@@ -8,7 +8,7 @@ from bs4 import BeautifulSoup
 from protego import Protego
 
 USER_AGENT = "ConcursoEstudosPessoais/2.0"
-HOSTS = {"www.pciconcursos.com.br", "pciconcursos.com.br", "fafipa.selecao.net.br", "concursos.fundacaofafipa.org.br", "concursos.fundacaounespar.org.br", "anexos-r2.selecao.net.br", "anexos.cdn.selecao.net.br", "anexos.selecao.net.br"}
+HOSTS = {"www.pciconcursos.com.br", "pciconcursos.com.br", "www.qconcursos.com", "qconcursos.com", "arquivos.qconcursos.com", "fafipa.selecao.net.br", "concursos.fundacaofafipa.org.br", "concursos.fundacaounespar.org.br", "anexos-r2.selecao.net.br", "anexos.cdn.selecao.net.br", "anexos.selecao.net.br"}
 
 
 class AccessRequired(RuntimeError):

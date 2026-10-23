@@ -100,8 +100,8 @@ def test_other_contest_cannot_replace_preliminary(root):
     assert documents(a, root)[0]["id"] == pre
 
 
-def test_v1_upgrade_backs_up_reclassifies_and_is_idempotent(root):
-    rec = record(root, fonte="FAFIPA", url=PARANAGUA)
+def test_v1_upgrade_backs_up_and_is_idempotent(root):
+    rec = record(root, fonte="PCI")
     data = pdf("Respostas")
     name = "Anexo Único - Divulgação do Gabarito Preliminar"
     did = store_pdf([data], [rec], ANNEX + "3258.pdf", "comunicado", name, root)
@@ -113,13 +113,13 @@ def test_v1_upgrade_backs_up_reclassifies_and_is_idempotent(root):
         c.execute("PRAGMA user_version=1")
     initialize(root)
     initialize(root)
-    backups = list((root / "backups").glob("antes-migracao-v3-*.sqlite3"))
+    backups = list((root / "backups").glob("antes-migracao-v4-*.sqlite3"))
     assert len(backups) == 1
     with sqlite3.connect(backups[0]) as backup:
         assert backup.execute("PRAGMA user_version").fetchone()[0] == 1
         assert backup.execute("SELECT tipo FROM origens_documento").fetchone()[0] == "comunicado"
     doc = documents(rec, root)[0]
-    assert doc["id"] == did and doc["tipos"] == "gabarito preliminar"
+    assert doc["id"] == did and doc["tipos"] == "comunicado"
     assert safe_path(doc["caminho"], root).read_bytes() == data
     assert job_row(root, job)["estado"] == "iniciando"
     assert job_row(root, job)["total"] is None
@@ -134,11 +134,12 @@ def test_rediscovery_updates_metadata_without_losing_links(root):
     assert documents(b, root)[0]["nome"] == "Novo"
 
 
-def test_download_refresh_once_and_skips_preliminary(root, monkeypatch):
-    a = record(root, fonte="FAFIPA", url=PARANAGUA, cargo="Auxiliar Administrativo")
-    b = record(root, fonte="FAFIPA", url=PARANAGUA, cargo="Motorista")
-    origin(root, [a, b], ANNEX + "3258.pdf", "comunicado", "Anexo Único - Divulgação do Gabarito Preliminar")
-    job = create_job("download", {"registros": [a, b]}, root, launch=False)
+def test_qconcursos_download_uses_cataloged_origins_and_skips_preliminary(root, monkeypatch):
+    qurl = "https://www.qconcursos.com/questoes-de-concursos/provas/fafipa-2025-exemplo"
+    rec = record(root, fonte="QCONCURSOS", url=qurl)
+    origin(root, [rec], "https://arquivos.qconcursos.com/prova/arquivo_gabarito/1/preliminar.pdf", "gabarito preliminar", "Gabarito preliminar")
+    origin(root, [rec], "https://arquivos.qconcursos.com/prova/arquivo_gabarito/1/definitivo.pdf", "gabarito definitivo", "Gabarito definitivo")
+    job = create_job("download", {"registros": [rec]}, root, launch=False)
     runner = Runner(job, root)
     pages, downloads = [], []
     def page(url):
@@ -150,10 +151,10 @@ def test_download_refresh_once_and_skips_preliminary(root, monkeypatch):
     monkeypatch.setattr(runner, "page", page)
     monkeypatch.setattr("acervo.jobs.download_origin", download)
     assert runner.run() == "concluída"
-    assert pages == [PARANAGUA]
-    assert set(downloads) == {ANNEX + "3328.pdf", ANNEX + "3257.pdf"}
+    assert pages == []
+    assert downloads == ["https://arquivos.qconcursos.com/prova/arquivo_gabarito/1/definitivo.pdf"]
     row = job_row(root, job)
-    assert row["total"] == row["processados"] == row["novos"] == 2
+    assert row["total"] == row["processados"] == row["novos"] == 1
 
 
 def test_preliminary_type_filter_cannot_download_superseded_origin(root, monkeypatch):
@@ -355,7 +356,7 @@ def test_v2_migration_requeues_only_old_robots_blocks_without_downloading(root):
     with connect(root) as c:
         row = c.execute("SELECT estado,erro,motivo_codigo,http_status FROM origens_documento WHERE url=?", (url,)).fetchone()
         assert tuple(row) == ("pendente", "", "aguardando_nova_tentativa", None)
-        assert c.execute("PRAGMA user_version").fetchone()[0] == 3
+        assert c.execute("PRAGMA user_version").fetchone()[0] == 4
     assert not list((root / "pdfs").rglob("*.pdf"))
 
 

@@ -66,22 +66,58 @@ def file_detail(doc, key):
 with st.sidebar:
     st.markdown("### Filtros da busca")
     st.caption("Valores do mesmo campo: OU. Campos diferentes: E. Vazio: sem restrição.")
+    fontes = st.multiselect("Fontes", ["PCI", "QCONCURSOS"], default=["PCI", "QCONCURSOS"], format_func=lambda source: "Qconcursos" if source == "QCONCURSOS" else source)
+    q_enabled = "QCONCURSOS" in fontes
+    pci_enabled = "PCI" in fontes
     with connect() as c:
-        available = [r[0] for r in c.execute("SELECT DISTINCT nome FROM categorias ORDER BY nome")]
-    cargos = st.multiselect("Cargos / termos do cargo", sorted(set(DEFAULT_ROLES + EXTRA_ROLES + available)), default=DEFAULT_ROLES, accept_new_options=True)
-    extra = st.checkbox("Incluir cargos administrativos de apoio", help="Assistente, Agente, Auxiliar e Técnico Administrativo")
-    if extra:
-        cargos = list(dict.fromkeys(cargos + EXTRA_ROLES))
-    foco = st.checkbox("Foco no meu concurso", value=True, help="Dentro dos cargos selecionados: FAFIPA OU Prefeitura de Curitiba. Desmarque para buscar em outras bancas e órgãos.")
-    fontes = st.multiselect("Fontes", ["PCI", "FAFIPA"], default=["PCI", "FAFIPA"])
-    a, b = st.columns(2)
-    inicio = a.number_input("Ano inicial", min_value=0, max_value=2100, value=0, step=1)
-    fim = b.number_input("Ano final", min_value=0, max_value=2100, value=0, step=1)
-    st.caption("Ano 0 = sem limite. O ano do concurso é usado quando não há data da prova.")
-    bancas = terms(st.text_input("Bancas", placeholder="FAFIPA; UFPR"))
-    orgaos = terms(st.text_input("Órgãos", placeholder="Curitiba; Câmara"))
-    municipios = terms(st.text_input("Municípios", placeholder="Curitiba; Paranavaí"))
-    ufs = [u.upper() for u in terms(st.text_input("UFs", placeholder="PR; SC"))]
+        pci_roles = [r[0] for r in c.execute("SELECT DISTINCT nome FROM categorias WHERE fonte='PCI' ORDER BY nome")]
+        facet_options = {field: [r[0] for r in c.execute("SELECT DISTINCT nome FROM facetas_qconcursos WHERE campo=? ORDER BY nome", (field,))] for field in (
+            "by_examining_board", "by_institution", "by_job", "application_year",
+            "by_scholarity", "by_acting_area", "by_formation_area",
+        )}
+        facet_options["application_year"] = sorted(set(facet_options["application_year"] + [
+            r[0] for r in c.execute("SELECT DISTINCT nome FROM facetas_qconcursos WHERE campo='by_year' ORDER BY nome")
+        ]))
+    if q_enabled:
+        fallback_roles = DEFAULT_ROLES + EXTRA_ROLES if not facet_options["by_job"] else []
+        cargos_options = sorted(set(facet_options["by_job"] + (pci_roles if pci_enabled else []) + fallback_roles))
+        default_cargos = [role for role in DEFAULT_ROLES if role in cargos_options] or (DEFAULT_ROLES if not facet_options["by_job"] else [])
+        cargos = st.multiselect("Cargos", cargos_options, default=default_cargos, accept_new_options=pci_enabled or not facet_options["by_job"])
+    elif pci_enabled:
+        cargos = st.multiselect("Cargos / termos do cargo", sorted(set(DEFAULT_ROLES + EXTRA_ROLES + pci_roles)), default=DEFAULT_ROLES, accept_new_options=True)
+    else:
+        cargos = []
+    if pci_enabled:
+        extra = st.checkbox("Incluir cargos administrativos de apoio", help="Assistente, Agente, Auxiliar e Técnico Administrativo")
+        if extra:
+            cargos = list(dict.fromkeys(cargos + EXTRA_ROLES))
+    foco = st.checkbox("Foco no meu concurso", value=True, help="Dentro dos cargos selecionados: FAFIPA OU Prefeitura de Curitiba. Desmarque para buscar em outras bancas e órgãos.") if pci_enabled else False
+    inicio = fim = None
+    anos_aplicacao = []
+    if q_enabled:
+        anos_aplicacao = st.multiselect("Ano de aplicação · Qconcursos", facet_options["application_year"])
+    elif pci_enabled:
+        a, b = st.columns(2)
+        inicio = a.number_input("Ano inicial", min_value=0, max_value=2100, value=0, step=1)
+        fim = b.number_input("Ano final", min_value=0, max_value=2100, value=0, step=1)
+        st.caption("Ano 0 = sem limite. O ano do concurso é usado quando não há data da prova.")
+    if q_enabled:
+        bancas = st.multiselect("Bancas", facet_options["by_examining_board"], accept_new_options=pci_enabled)
+        orgaos = st.multiselect("Órgãos / instituições", facet_options["by_institution"], accept_new_options=pci_enabled)
+        escolaridades = st.multiselect("Escolaridade", facet_options["by_scholarity"])
+        areas_atuacao = st.multiselect("Área de atuação", facet_options["by_acting_area"])
+        areas_formacao = st.multiselect("Área de formação", facet_options["by_formation_area"])
+    elif pci_enabled:
+        bancas = terms(st.text_input("Bancas", placeholder="FAFIPA; UFPR"))
+        orgaos = terms(st.text_input("Órgãos", placeholder="Curitiba; Câmara"))
+        escolaridades = areas_atuacao = areas_formacao = []
+    else:
+        bancas = orgaos = escolaridades = areas_atuacao = areas_formacao = []
+    if pci_enabled:
+        municipios = terms(st.text_input("Municípios", placeholder="Curitiba; Paranavaí"))
+        ufs = [u.upper() for u in terms(st.text_input("UFs", placeholder="PR; SC"))]
+    else:
+        municipios = ufs = []
     tipos = st.multiselect("Tipos de documento", KINDS)
     st.caption("Separe valores de texto com ponto e vírgula. Tipos filtram documentos já identificados.")
     st.divider()
@@ -93,7 +129,7 @@ with st.sidebar:
         if edital.is_file():
             st.download_button("Abrir edital de referência", edital.read_bytes(), "Edital_base.pdf", "application/pdf")
 
-filters = Filters(cargos=cargos, bancas=bancas, orgaos=orgaos, municipios=municipios, ufs=ufs, fontes=fontes, tipos=tipos, ano_inicio=inicio or None, ano_fim=fim or None, foco=foco)
+filters = Filters(cargos=cargos, bancas=bancas, orgaos=orgaos, municipios=municipios, ufs=ufs, fontes=fontes, tipos=tipos, escolaridades=escolaridades, areas_atuacao=areas_atuacao, areas_formacao=areas_formacao, anos_aplicacao=anos_aplicacao, ano_inicio=inicio or None, ano_fim=fim or None, foco=foco)
 valid_years = not (inicio and fim and inicio > fim)
 
 st.caption("ESTUDO COM PROVAS REAIS")
@@ -142,15 +178,19 @@ def progress(location):
             st.info("Cancelamento solicitado. Uma requisição em andamento pode levar até 35 segundos.")
         with connect() as c:
             events = [dict(r) for r in c.execute("SELECT momento,nivel,mensagem FROM eventos WHERE execucao_id=? ORDER BY id DESC LIMIT 25", (latest["id"],))]
-            blocked = [dict(r) for r in c.execute("""SELECT DISTINCT o.nome,o.url,o.erro FROM origens_documento o
+            blocked = [dict(r) for r in c.execute("""SELECT DISTINCT o.id origem_id,o.nome,o.url,o.erro,r.id registro_id FROM origens_documento o
+                JOIN documento_registro dr ON dr.documento_id=o.documento_id
+                JOIN registros r ON r.id=dr.registro_id
                 JOIN eventos e ON instr(e.mensagem,o.url || ':')=1
                 WHERE e.execucao_id=? AND e.nivel='pendência' AND o.estado='intervenção necessária' LIMIT 10""", (latest["id"],))]
         if blocked:
             with st.expander("Arquivos pendentes de importação manual"):
-                st.write("Abra o documento na fonte, baixe pelo navegador e envie o PDF na aba Importar arquivos.")
+                st.write("Abra a página PCI, conclua a verificação e tente retomar. A coleta usa uma sessão própria e não compartilha os cookies do navegador; se o PCI continuar bloqueando, baixe o PDF pelo site e importe-o.")
                 for origin in blocked:
                     st.link_button(origin["nome"], origin["url"])
                     st.caption(origin["erro"])
+                    if st.button("Retomar após verificação", key=f"resume-pci-{origin['origem_id']}"):
+                        start("download", {"registros": [origin["registro_id"]], "filtros": {}})
         if not active:
             if st.button("Atualizar resultados", key=f"refresh-{location}-{latest['id']}"):
                 st.rerun()
@@ -168,18 +208,31 @@ search_tab, library_tab, import_tab = st.tabs(["Buscar provas", "Meu acervo", "I
 with search_tab:
     st.subheader("Pesquisar e catalogar")
     st.write("Escolha os filtros à esquerda. A pesquisa consulta as fontes e acrescenta os resultados ao catálogo acumulado.")
-    st.caption("PCI: quando houver verificação, abra a origem, baixe no navegador e importe o PDF. FAFIPA: somente documentos públicos; comunicados e cadernos são identificados separadamente.")
+    st.caption("PCI: quando houver verificação, conclua-a na página e use Retomar após verificação. A coleta não compartilha os cookies do navegador; se o PCI continuar bloqueando, importe o PDF manualmente. Qconcursos: os documentos encontrados são catalogados e baixados diretamente quando públicos.")
     if not valid_years:
         st.error("O ano inicial deve ser menor ou igual ao ano final.")
     a, b = st.columns([1, 2])
     if a.button("Pesquisar e catalogar", type="primary", disabled=not valid_years):
         start("catalogar", {"filtros": filters.to_dict()})
-    if b.button("Atualizar índice de cargos do PCI"):
-        start("categorias", {})
+    with b:
+        x, y = st.columns(2)
+        if x.button("Atualizar cargos PCI"):
+            start("categorias", {})
+        if y.button("Atualizar filtros Qconcursos"):
+            start("facetas_qconcursos", {})
     if st.button("Atualizar tabela de resultados"):
         st.rerun()
     found = records(filters=filters)
     st.caption(f"Registros correspondentes aos filtros atuais: {len(found)}. Durante a coleta, atualize a tabela para ver novos registros.")
+    verification_records = [r for r in found if r["fonte"] == "PCI" and r["estado"] == "verificação necessária"]
+    if verification_records:
+        with st.expander(f"Verificação PCI necessária · {len(verification_records)}"):
+            st.write("Conclua a verificação na página do PCI e depois tente retomar a coleta. A sessão do navegador não é compartilhada com o coletor; se o PCI continuar bloqueando, importe o PDF manualmente.")
+            for row in verification_records:
+                a, b = st.columns([2, 1])
+                a.link_button(f"Abrir PCI · {row['cargo']} · {row['ano'] or 'ano desconhecido'}", row["url"], key=f"open-pci-{row['id']}")
+                if b.button("Retomar após verificação", key=f"retry-pci-record-{row['id']}"):
+                    start("download", {"registros": [row["id"]], "filtros": {}})
     if found:
         data = pd.DataFrame([{"Selecionar": False, "ID": r["id"], "Ano": r["ano"], "Cargo": r["cargo"], "Órgão": r["orgao"], "Banca": r["banca"], "Fonte": r["fonte"], "Prova": r["prova_situacao"], "Gabarito": r["gabarito_situacao"], "Situação": r["estado"], "PDFs salvos": r["baixados"], "Documentos": r["tipos"] or "a identificar", "Origem": r["url"]} for r in found])
         edited = st.data_editor(data, hide_index=True, disabled=[col for col in data.columns if col != "Selecionar"], column_config={"Origem": st.column_config.LinkColumn("Origem")}, width="stretch", key="search-results")

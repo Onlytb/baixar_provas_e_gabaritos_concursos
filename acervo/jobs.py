@@ -14,7 +14,7 @@ from .files import download_origin
 from .http import AccessRequired, Cancelled, Client, HumanActionRequired, ProcessingFailure, SourceFailure
 from .model import Filters, norm, role_matches
 from .preference import visible_origin_links
-from .sources import FAFIPA, PCI, fafipa_contests, fafipa_detail, pagination, pci_categories, pci_detail, pci_rows
+from .sources import PCI, QCONCURSOS_PROVAS, pagination, pci_categories, pci_detail, pci_rows, qconcursos_facets, qconcursos_rows, qconcursos_search_url
 
 
 def interrupted(root=None):
@@ -72,7 +72,6 @@ class Runner:
         self.root = Path(root or root_dir())
         self.last_check = 0
         self.client = Client(check=self.check)
-        self.fafipa_refreshed = set()
         with connect(self.root) as c:
             row = c.execute("SELECT * FROM execucoes WHERE id=?", (job,)).fetchone()
             self.params = json.loads(row["parametros"])
@@ -124,6 +123,18 @@ class Runner:
         self.log(f"Índice atualizado: {len(categories)} cargos PCI")
         self.status(outcome="pagina")
         return categories
+
+    def qconcursos_facets(self, soup=None):
+        soup = soup or self.page(QCONCURSOS_PROVAS)
+        facets = qconcursos_facets(soup)
+        if not facets:
+            raise ValueError("Filtros do Qconcursos não reconhecidos; o layout pode ter mudado.")
+        with connect(self.root) as c:
+            c.execute("DELETE FROM facetas_qconcursos")
+            c.executemany("INSERT INTO facetas_qconcursos(campo,nome,valor) VALUES(?,?,?)", [(f["campo"], f["nome"], f["id"]) for f in facets])
+        self.log(f"Filtros Qconcursos atualizados: {len(facets)} opções")
+        self.status(outcome="pagina")
+        return facets
 
     def details_pci(self, row, rec):
         try:
@@ -185,51 +196,48 @@ class Runner:
                 except Exception as e:
                     self.log(url + ": " + str(e), error=True)
 
-    def save_fafipa(self, rows, docs, selected):
+    def scan_qconcursos(self):
         with connect(self.root) as c:
-            ids = [upsert_record(c, **row) for row in selected]
-            linked_ids = set()
-            for doc in docs:
-                named_roles = [r for r in rows if norm(r["cargo"]) in norm(doc["nome"])]
-                doc_roles = [i for i, row in zip(ids, selected) if any(norm(row["cargo"]) == norm(named["cargo"]) for named in named_roles)] if named_roles else ([] if doc["tipo"] == "prova" else ids)
-                if doc_roles:
-                    discover_document(c, doc_roles, doc["url"], doc["tipo"], doc["nome"])
-                    linked_ids.update(doc_roles)
-            for rec in ids:
-                c.execute("UPDATE registros SET estado=?,erro='',atualizado_em=? WHERE id=?", ("catalogado" if rec in linked_ids else "sem arquivos", now(), rec))
-
-    def scan_fafipa(self):
-        pending = deque([FAFIPA + "/?situacao=1", FAFIPA + "/?situacao=3"])
-        visited = set()
-        contests_seen = set()
+            facets = [dict(r) for r in c.execute("SELECT campo,nome,valor id FROM facetas_qconcursos")]
+        try:
+            facets = self.qconcursos_facets()
+        except Cancelled:
+            raise
+        except Exception as e:
+            self.log("Não foi possível atualizar os filtros do Qconcursos; usando opções já catalogadas: " + str(e), error=True)
+        pending = deque([qconcursos_search_url(self.filters, facets)])
+        facet_labels = {}
+        for facet in facets:
+            facet_labels.setdefault(facet["campo"], set()).add(norm(facet["nome"]))
+        visited_pages = set()
+        seen_rows = set()
         while pending:
             url = pending.popleft()
-            if url in visited:
+            if url in visited_pages:
                 continue
-            visited.add(url)
+            visited_pages.add(url)
             try:
                 soup = self.page(url)
-                contests = fafipa_contests(soup)
-                if not contests:
-                    raise ValueError("Índice de concursos FAFIPA não reconhecido")
-                pending.extend(n for n in pagination(soup, url) if n not in visited)
-                for detail in contests:
-                    if detail in contests_seen:
+                rows = qconcursos_rows(soup, url)
+                next_pages = pagination(soup, url)
+                pending.extend(next_url for next_url in next_pages if next_url not in visited_pages)
+                matched = 0
+                for row in rows:
+                    row["areas_atuacao"] = "; ".join(v for v in self.filters.areas_atuacao if norm(v) in facet_labels.get("by_acting_area", set()))
+                    row["areas_formacao"] = "; ".join(v for v in self.filters.areas_formacao if norm(v) in facet_labels.get("by_formation_area", set()))
+                    if not row["escolaridade"]:
+                        row["escolaridade"] = "; ".join(v for v in self.filters.escolaridades if norm(v) in facet_labels.get("by_scholarity", set()))
+                    if not self.filters.matches(row) or row["url"] in seen_rows:
                         continue
-                    contests_seen.add(detail)
-                    try:
-                        rows, docs = fafipa_detail(self.page(detail), detail)
-                        selected = [r for r in rows if self.filters.matches(r)]
-                        if selected:
-                            self.save_fafipa(rows, docs, selected)
-                        self.fafipa_refreshed.add(detail)
-                        self.log(f"FAFIPA: {len(selected)} cargos correspondentes | {detail}")
-                        self.status(outcome="pagina")
-                    except Cancelled:
-                        raise
-                    except Exception as e:
-                        self.log(detail + ": " + str(e), error=True)
-                self.log("Índice FAFIPA processado: " + url)
+                    seen_rows.add(row["url"])
+                    docs = row.pop("documentos")
+                    with connect(self.root) as c:
+                        rec = upsert_record(c, **row)
+                        for doc in docs:
+                            discover_document(c, [rec], doc["url"], doc["tipo"], doc["nome"])
+                        c.execute("UPDATE registros SET estado=?,erro='',atualizado_em=? WHERE id=?", ("catalogado" if docs else "sem arquivos", now(), rec))
+                    matched += 1
+                self.log(f"Qconcursos: {matched} provas correspondentes | {url}")
                 self.status(outcome="pagina")
             except Cancelled:
                 raise
@@ -249,17 +257,6 @@ class Runner:
         for row in selected_records:
             if row["id"] in ids and row["fonte"] == "PCI":
                 self.details_pci(row, row["id"])
-            if row["fonte"] == "FAFIPA" and row["url"] not in self.fafipa_refreshed:
-                self.fafipa_refreshed.add(row["url"])
-                try:
-                    rows, docs = fafipa_detail(self.page(row["url"]), row["url"])
-                    roles = {norm(r["cargo"]) for r in selected_records if r["url"] == row["url"]}
-                    self.save_fafipa(rows, docs, [r for r in rows if norm(r["cargo"]) in roles])
-                    self.log("Documentos FAFIPA atualizados: " + row["url"])
-                except Cancelled:
-                    raise
-                except Exception as e:
-                    self.log("Não foi possível atualizar a fonte; usando o catálogo existente: " + str(e), error=True)
         retry_ids = set(self.params.get("documentos", []))
         retry_only = bool(self.params.get("somente_pendentes"))
         with connect(self.root) as c:
@@ -318,16 +315,19 @@ class Runner:
             if self.action == "categorias":
                 self.status("Atualizando índice de cargos", "")
                 self.categories()
+            elif self.action == "facetas_qconcursos":
+                self.status("Atualizando filtros do Qconcursos", "")
+                self.qconcursos_facets()
             elif self.action == "download":
                 self.download()
             elif self.action == "catalogar":
-                for source in self.filters.fontes or ["PCI", "FAFIPA"]:
+                for source in self.filters.fontes or ["PCI", "QCONCURSOS"]:
                     self.check()
                     self.status("Catalogando " + source, "")
                     if source == "PCI":
                         self.scan_pci()
-                    elif source == "FAFIPA":
-                        self.scan_fafipa()
+                    elif source == "QCONCURSOS":
+                        self.scan_qconcursos()
                 if self.params.get("download"):
                     self.download()
             else:

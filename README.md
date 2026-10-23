@@ -1,114 +1,106 @@
-# Acervo de provas e gabaritos de concursos
+# Acervo de provas
 
-Aplicação local para pesquisar, catalogar, baixar e organizar provas e gabaritos públicos de concursos. A interface abre no navegador do próprio computador. A coleta respeita as regras dos sites: verificações, CAPTCHA e login precisam ser concluídos pela pessoa usuária.
-
-## O que você precisa
-
-A forma mais simples de executar é com **Docker Desktop**, disponível para Windows, macOS e Linux. No Windows, instale o Docker Desktop e abra-o; espere até indicar que o Docker está em execução. Você também precisará do Git para copiar o projeto. Se preferir não instalar Docker, há uma alternativa com Python mais abaixo.
+Aplicação pessoal local para reunir provas e gabaritos de concursos, com foco inicial em Analista Administrativo, Prefeitura de Curitiba e FAFIPA.
 
 ## Instalação no Windows
 
-1. Instale o [Git para Windows](https://git-scm.com/download/win) e o [Docker Desktop](https://www.docker.com/products/docker-desktop/). Durante a instalação do Docker, aceite o uso do WSL 2 se essa opção for apresentada. Reinicie o computador se o instalador pedir.
-2. Abra o Docker Desktop e aguarde ficar pronto.
-3. Abra o **PowerShell**. Você pode encontrá-lo no menu Iniciar.
-4. Copie e cole estes comandos, um por vez:
+Instale e abra o Docker Desktop. No PowerShell, clone o repositório e entre na pasta:
 
 ```powershell
 git clone https://github.com/Onlytb/baixar_provas_e_gabaritos_concursos.git
 cd baixar_provas_e_gabaritos_concursos
+```
+
+Depois siga a seção **Iniciar** abaixo. A pasta `acervo_pci/` é local e fica fora do GitHub; cada pessoa mantém seu próprio banco e PDFs.
+
+## Iniciar
+
+Com o Docker Desktop funcionando, abra o PowerShell nesta pasta:
+
+```powershell
 docker compose up --build -d
 ```
 
-Na primeira execução, o Docker baixa os componentes necessários e monta a aplicação; isso pode demorar alguns minutos. Quando terminar, abra [http://localhost:8501](http://localhost:8501) no navegador. A aplicação fica disponível apenas no seu próprio computador.
-
-> Para iniciar uma cópia já baixada, abra o PowerShell na pasta `baixar_provas_e_gabaritos_concursos` e rode `docker compose up -d`.
-
-## Usar a aplicação
-
-1. **Pesquisar:** ajuste os filtros à esquerda e clique em **Pesquisar e catalogar**. A pesquisa inicial se concentra nos cargos escolhidos junto à FAFIPA ou à Prefeitura de Curitiba. Desmarque o foco para ampliar os resultados. Ano `0` significa sem limite.
-2. **Baixar:** catalogar não baixa os PDFs. Atualize a tabela, selecione os registros e clique em **Baixar selecionados**, ou peça o download de todos os resultados filtrados. O painel mostra o andamento e separa PDFs baixados, reaproveitados, pendências e falhas. É possível fechar a aba enquanto a execução continua.
-3. **Resolver verificações do PCI:** abra a página da origem, conclua a verificação no navegador e baixe o PDF. Depois, em **Importar arquivos**, selecione o cargo e envie o arquivo.
-4. **Consultar o acervo:** use **Meu acervo** para ver documentos disponíveis ou catalogados que ainda estão pendentes. Os documentos são organizados por concurso; a pesquisa textual ignora acentos e exige que todos os termos informados apareçam.
-5. **Importar PDFs próprios:** em **Importar arquivos**, envie um ou mais documentos. Escolha um tipo por envio; provas e gabaritos de tipos diferentes devem ser enviados separadamente. Um mesmo documento pode ser associado a vários cargos.
-
-Campos de texto vazios não limitam a busca. Separe opções com ponto e vírgula: opções no mesmo campo funcionam como **OU** e campos diferentes como **E**. Cargo, banca, órgão e município aceitam correspondência parcial e ignoram acentos; UF exige igualdade. Sem cargos selecionados, a pesquisa pode abranger todos os cargos da fonte e demorar bastante.
-
-A coleta acontece em segundo plano e permite uma execução por vez. O botão de cancelamento interrompe entre requisições; uma requisição já iniciada pode levar até 35 segundos. Ao reiniciar a aplicação, uma execução que ainda constava ativa será marcada como interrompida. Os dados já salvos são preservados.
-
-## Parar e iniciar novamente
-
-No PowerShell, dentro da pasta do projeto:
+Acesse **http://localhost:8501**. A porta é publicada apenas em `127.0.0.1`.
 
 ```powershell
-# Parar sem apagar os dados
-docker compose stop
-
-# Iniciar novamente
-docker compose start
-
-# Ver se o serviço está ativo
 docker compose ps
-
-# Ver mensagens recentes para investigar um problema
 docker compose logs --tail 80 acervo
+docker compose stop
+docker compose start
 ```
 
-Para encerrar e remover o contêiner, preservando os dados, use `docker compose down`. Para voltar a executar, use `docker compose up -d`.
+## Usar
 
-## Onde ficam os dados
+1. **Buscar provas:** ajuste os filtros à esquerda e clique em **Pesquisar e catalogar**. A busca usa PCI e Qconcursos por padrão. O foco inicial considera os cargos escolhidos associados à FAFIPA **ou** à Prefeitura de Curitiba quando PCI está selecionado. Desmarque o foco para ampliar a pesquisa. No filtro anual do PCI, ano `0` significa sem limite.
+2. Atualize a tabela durante ou depois da coleta. Selecione os registros e clique em **Baixar selecionados**, ou baixe todos os resultados filtrados. O painel junto aos botões mostra a etapa, o arquivo atual e o progresso, atualizado a cada 3 segundos. Ele separa PDFs novos, reaproveitados, pendências de importação manual e falhas. Catalogar não baixa os PDFs.
+3. **PCI com verificação:** abra a origem, conclua a verificação pessoalmente no navegador e use **Retomar após verificação**. A coleta tentará ler os links liberados e baixar os documentos. O coletor não compartilha os cookies do navegador; se o PCI continuar bloqueando, baixe o arquivo pelo site e envie-o em **Importar arquivos**.
+4. **Meu acervo:** escolha entre **Disponíveis no acervo** e **Catalogados e pendentes**. Os documentos aparecem agrupados por concurso, com seus cargos e indicação do que já existe em PDF íntegro. A pesquisa textual exige todos os termos e ignora acentos; o CSV exporta exatamente a visão selecionada e seus filtros.
+5. **Importar arquivos:** também aceita novos concursos e vários PDFs por envio. Escolha um tipo por importação; provas e gabaritos devem ser importados separadamente quando os tipos diferirem. É possível vincular o mesmo documento a vários cargos.
 
-A pasta `acervo_pci/` é criada localmente quando a aplicação inicia. Ela guarda o banco de dados, PDFs, exportação CSV, cópias de segurança e registros técnicos. **Essa pasta e os arquivos baixados não fazem parte do repositório Git**; cada pessoa mantém o próprio acervo no computador. Não apague essa pasta se quiser preservar seus dados.
+Campos vazios não restringem a busca. Separe termos por `;`: dentro de um campo vale **OU**; entre campos vale **E**. Cargo, banca, órgão e município usam correspondência parcial sem acentos; UF usa igualdade. Tipos filtram documentos já identificados, por isso registros aguardando verificação podem não aparecer quando um tipo estiver selecionado. Município e ano podem ser inferidos do órgão/edital; anos desconhecidos ficam fora de filtros anuais ativos.
 
-Para fazer backup, pare a aplicação com `docker compose stop` e copie a pasta `acervo_pci` para outro local. Depois, inicie de novo com `docker compose start`. Para restaurar, pare o serviço e substitua a pasta pela cópia de backup.
+Os filtros se adaptam às fontes. No Qconcursos, **Atualizar filtros Qconcursos** carrega as opções de banca, órgão, cargo, ano de aplicação, escolaridade, área de atuação e área de formação. Os anos podem ser selecionados individualmente. No PCI, os anos continuam disponíveis como intervalo e os campos de localidade ficam disponíveis. **Atualizar cargos PCI** acrescenta opções do site. Sem cargos selecionados, todos os cargos das fontes escolhidas serão pesquisados; isso pode levar bastante tempo. As páginas são percorridas integralmente, mesmo quando os anos não estão ordenados.
 
-O arquivo `Edital_base.pdf` é opcional e não acompanha o projeto. Ele serve apenas como material de referência na interface; sem ele, o restante da aplicação funciona normalmente.
+A coleta roda em segundo plano e aceita uma execução por vez. Fechar a aba não cancela o processo. O botão de cancelamento interrompe entre requisições e durante esperas/downloads; uma requisição em andamento pode levar até 35 segundos. Resultados já salvos são preservados. Ao reiniciar o serviço, execuções ativas são marcadas como interrompidas. **Executar novamente** repete a descoberta e reaproveita o conteúdo válido já salvo.
 
-## Alternativa: executar com Python
+O acompanhamento é persistido no banco e reaparece ao recarregar a página. A barra mede arquivos processados (incluindo bloqueios e falhas), não bytes transferidos; durante a consulta às fontes, o indicador permanece animado sem porcentagem. O resumo final fica visível mesmo se a execução terminar rapidamente.
 
-Use Python **3.12 ou mais recente**. No PowerShell, dentro da pasta do projeto, crie um ambiente isolado e instale as bibliotecas:
+Quando há gabarito definitivo para o mesmo cargo/concurso e a mesma etapa/versão identificada, o preliminar é ocultado da listagem, pesquisa textual e CSV, e não entra na fila de downloads. A preferência vale mesmo se o definitivo ainda não foi baixado e antes dos filtros de tipo. Correspondências ambíguas preservam o preliminar. PDFs preliminares já salvos e sua procedência permanecem no disco e no banco.
+
+## Fontes e limites
+
+- PCI: catálogo público e reconhecimento de links diretos ou páginas com verificação. O layout atual libera URLs após verificação; a aplicação não resolve CAPTCHA nem contorna a proteção. Depois da confirmação humana, **Retomar após verificação** faz uma nova tentativa na sessão própria do coletor. Os cookies do navegador não são compartilhados; se o PCI continuar bloqueando, importe o PDF baixado no navegador.
+- Qconcursos: índice público de provas e links diretos para prova, gabarito, alterações e edital. Escolaridade, área de atuação e área de formação podem ser usadas na busca. Os arquivos encontrados são validados pelo mesmo fluxo de PDF das outras fontes.
+- A descoberta de páginas respeita o `robots.txt`. PDFs públicos já catalogados são tentados como downloads solicitados, com validação de HTTPS, domínio, redirecionamentos e conteúdo. CAPTCHA/login ou recusa persistente exigem intervenção; falhas temporárias, links removidos e erros de processamento ficam separados. Em **Catalogados e pendentes**, é possível tentar novamente os downloads que ainda podem ser automatizados.
+- Os domínios de anexos aceitos são explícitos no cliente HTTP. Redirecionamentos também passam por validação e regras de acesso do domínio de destino. Há limite mínimo de 2,5 segundos por domínio e até três tentativas para falhas transitórias.
+- O Qconcursos informa o ano da prova no título do registro. Um gabarito pode conter vários cargos; o vínculo é ao documento inteiro, sem extrair respostas individuais.
+- Cargo parecido é sugestão de estudo. O aplicativo não afirma equivalência com o edital, não separa questões e não resolve verificações, CAPTCHA ou login.
+- PDFs digitalizados sem camada textual permanecem no acervo como **sem texto pesquisável**. OCR está fora desta versão. Extração protegida ou malsucedida aparece separadamente.
+- Limite por PDF: 200 MB. A visualização embutida fica disponível até 20 MB; arquivos maiores podem ser baixados normalmente.
+
+## Dados e backup
+
+Tudo fica em `acervo_pci/`, montada no contêiner em `/data`:
+
+- `provas.sqlite3`: catálogo, vínculos, texto pesquisável e execuções;
+- `pdfs/`: documentos organizados pelo hash SHA-256, sem duplicar conteúdo;
+- `catalogo.csv`: exportação acumulada, atualizada ao fim das execuções/importações;
+- `backups/`: cópia SQLite anterior à migração do catálogo legado;
+- `logs/`: saída dos subprocessos de coleta.
+
+A migração inicial mantém as tabelas antigas e copia seus registros para o novo modelo, após backup SQLite consistente. O arquivo `Edital_base.pdf` é opcional e não acompanha o repositório. Para usá-lo, disponibilize-o localmente e configure `EDITAL_PATH` com um caminho montado no contêiner.
+
+A atualização para a versão 3 cria um backup `backups/antes-migracao-v3-*.sqlite3`, preserva arquivos e histórico, grava edital e metadados estruturados das tentativas e libera para nova tentativa os casos antigos bloqueados exclusivamente por `robots.txt`. A versão 4 cria backup antes de remover concursos, registros e origens da FAFIPA, remove PDFs sem outros vínculos e mantém os documentos compartilhados. Ela também acrescenta metadados de filtros do Qconcursos. A migração não inicia downloads.
+
+Para fazer uma cópia completa e consistente, pare o serviço e copie **toda** a pasta `acervo_pci` para outro local. Inclua os arquivos SQLite auxiliares, se existirem. Depois, inicie novamente:
 
 ```powershell
-py -3.12 -m venv .venv
-.\.venv\Scripts\Activate.ps1
-python -m pip install --upgrade pip
-pip install -r requirements.txt
-python entrypoint.py
+docker compose stop
+# Copie acervo_pci para o local de backup desejado.
+docker compose start
 ```
 
-Se o PowerShell bloquear a ativação do ambiente, abra o Prompt de Comando e use:
+Para restaurar, mantenha o serviço parado e restaure a pasta inteira. Recriar o contêiner com `docker compose up --build -d` mantém os dados montados.
 
-```bat
-.venv\Scripts\activate.bat
-```
+## Linha de comando
 
-Com a aplicação iniciada, abra [http://localhost:8501](http://localhost:8501). Para interromper, volte ao terminal e pressione `Ctrl+C`. A alternativa Python também cria e usa `acervo_pci/` na pasta do projeto.
-
-## Linha de comando (opcional)
-
-Quem preferir pode executar a coleta sem abrir a interface. Com Docker, os exemplos abaixo rodam dentro do contêiner:
+A CLI e a interface usam o mesmo coletor e banco:
 
 ```powershell
 docker compose exec acervo python coletor_provas_pci.py --help
-docker compose exec acervo python coletor_provas_pci.py --fonte FAFIPA --cargo "Analista Administrativo" --ano-inicio 2016 --download
+docker compose exec acervo python coletor_provas_pci.py --fonte QCONCURSOS --cargo "Analista Administrativo" --ano-inicio 2016 --download
+docker compose exec acervo python coletor_provas_pci.py --fonte QCONCURSOS --cargo "Analista Administrativo" --ano 2021 --ano 2022
 docker compose exec acervo python coletor_provas_pci.py --fonte PCI --correlatas --foco
 docker compose exec acervo python coletor_provas_pci.py --somente-download --todos-cargos
 ```
 
-Com Python instalado diretamente, remova o trecho `docker compose exec acervo` do início dos comandos. A CLI e a interface usam o mesmo acervo local.
+Sem Docker: Python 3.12+, `pip install -r requirements.txt`, depois `python entrypoint.py`. Para usar apenas a CLI, execute `python coletor_provas_pci.py`; a saída padrão é `acervo_pci`. `--saida` ou a variável `ACERVO_DIR` alteram a pasta. `EDITAL_PATH` altera a localização do edital exibido na interface.
 
-## Fontes e limites
+## Verificação
 
-- **PCI:** catálogo público. Algumas páginas liberam o arquivo somente depois de uma verificação feita pela pessoa usuária.
-- **FAFIPA:** índices de concursos, cargos e documentos públicos disponíveis no portal. Nem todo concurso publica provas.
-- A aplicação não resolve CAPTCHA ou login, não extrai respostas individuais de gabaritos e não afirma que cargos parecidos têm conteúdo equivalente.
-- PDF digitalizado sem texto pesquisável continua disponível para download, mas não pode ser pesquisado por conteúdo. OCR não está incluído.
-- Arquivos de até 200 MB podem ser importados. A visualização dentro da aplicação está disponível até 20 MB.
-- Os downloads são feitos sob solicitação da pessoa usuária, com limite de acesso por domínio e validação de endereço e conteúdo.
+```powershell
+docker compose exec acervo python -m pytest -q
+```
 
-## Problemas comuns
-
-- **“docker” não é reconhecido:** instale/abra o Docker Desktop e abra uma nova janela do PowerShell.
-- **Docker não iniciou:** abra o Docker Desktop, aguarde ficar pronto e tente novamente.
-- **A página não abre:** confirme que `docker compose ps` mostra o serviço ativo e consulte `docker compose logs --tail 80 acervo`.
-- **A porta 8501 já está em uso:** feche o outro programa que a utiliza e rode `docker compose up -d` novamente.
-- **Quero recomeçar sem perder o acervo:** use `docker compose down` e depois `docker compose up -d`. Não apague a pasta `acervo_pci`.
+Os testes usam bancos temporários e PDFs de teste, sem alterar o acervo pessoal nem depender da disponibilidade dos sites. Cobrem migração, filtros, parsers, classificação, importação, deduplicação, pesquisa textual, exclusão de execuções simultâneas, cancelamento e inicialização da interface.
